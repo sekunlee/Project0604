@@ -1,0 +1,106 @@
+
+📄 PDF 문서 내 표 데이터를 정확하게 추출하고 벡터화하는 방법
+
+✅ 문제 배경
+
+PDF 문서 내 표를 추출하여 질의응답 시스템이나 검색 시스템에 활용할 때 다음과 같은 문제가 자주 발생합니다:
+
+- 표의 행과 열 수가 일치하지 않아 인덱스 오류 발생
+- 셀 내부에 줄바꿈이 있어 텍스트가 누락됨
+- 셀 병합, 비정형 표 형식으로 인해 구조가 왜곡됨
+- 멀티라인 셀에서 내용이 잘리거나 순서가 뒤바뀜
+
+✅ 해결을 위한 3단계 전략
+
+1. PDF 표 추출 도구 선택
+
+표 구조와 스타일에 따라 다음 도구를 선택적으로 사용합니다.
+
+📦 Camelot
+
+```python
+import camelot
+tables = camelot.read_pdf("your_file.pdf", flavor='stream', pages='1')
+```
+
+- flavor='stream': 줄 기반 추출 (멀티라인 셀에 강함)
+- flavor='lattice': 선(line) 기반 추출 (테이블 선이 명확할 때 유리)
+
+📦 pdfplumber (세부 좌표 조정 가능)
+
+```python
+import pdfplumber
+
+with pdfplumber.open("your_file.pdf") as pdf:
+    page = pdf.pages[0]
+    table = page.extract_table({
+        "vertical_strategy": "lines",
+        "horizontal_strategy": "lines"
+    })
+```
+
+2. 표 데이터 전처리 및 정규화
+
+추출된 데이터는 pandas.DataFrame으로 정리 후 아래 과정을 수행합니다.
+
+📌 열 수 보정
+
+```python
+import pandas as pd
+
+def fix_row_length(row, target_length):
+    return row.tolist() + [''] * (target_length - len(row))
+
+df = pd.DataFrame(tables[0].data)
+df = df.apply(lambda row: fix_row_length(row, df.shape[1]), axis=1, result_type='broadcast')
+```
+
+📌 줄바꿈 정리 (멀티라인 셀)
+
+```python
+def clean_cell(text):
+    if isinstance(text, str):
+        return text.replace('\n', ' ').replace('\r', ' ').strip()
+    return text
+
+df = df.applymap(clean_cell)
+```
+
+3. 자연어 문장으로 변환 및 벡터화
+
+표의 각 행을 딕셔너리로 만들고 자연어 문장으로 구성합니다.
+
+```python
+rows = df.values.tolist()
+header = rows[0]
+
+sentences = []
+for row in rows[1:]:
+    item = dict(zip(header, row))
+    sentence = f"{item['이름']}은 {item['직업']}이며, 나이는 {item['나이']}세입니다."
+    sentences.append(sentence)
+```
+
+📦 벡터화 예시 (SBERT)
+
+```python
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+vectors = model.encode(sentences)
+```
+
+🔧 고급 보정 전략
+
+- 셀 병합 또는 멀티라인 문제는 pdfplumber.page.chars의 텍스트 위치(x0, top) 값을 기준으로 수동 병합 가능
+- 행 수가 다르거나 누락된 셀은 LLM (예: GPT)으로 보정 가능
+- 보정 후 문장화하여 벡터화하면 검색 정확도가 향상됨
+
+✅ 요약
+
+| 문제 | 해결 방법 |
+|------|-----------|
+| 셀 줄 수 불일치 | stream 방식 사용 및 pandas로 열 길이 보정 |
+| 셀 내 줄바꿈 | \n, \r 문자 제거 및 병합 |
+| 누락/왜곡된 셀 | 좌표 기반 수동 병합 또는 GPT 활용 보정 |
+| 벡터화 부정확 | 자연어 문장화 후 SBERT 등으로 임베딩 |
